@@ -3,12 +3,12 @@
 	 xmlns:m2="http://schemas.microsoft.com/appx/2013/manifest">
 
   <Identity Name="@PACKAGE_GUID@"
-	    Publisher="CN=appcelerator"
+	    Publisher="@PUBLISHER_NAME@"
 	    Version="1.1.0.0" />
 
   <Properties>
     <DisplayName>@SHORT_NAME@</DisplayName>
-    <PublisherDisplayName>Appcelerator</PublisherDisplayName>
+    <PublisherDisplayName>@PUBLISHER_DISPLAY_NAME@</PublisherDisplayName>
     <Logo>StoreLogo.png</Logo>
   </Properties>
 

@@ -2,7 +2,7 @@
  * Signs an app and copies the result to the specified output directory.
  *
  * @copyright
- * Copyright (c) 2014 by Appcelerator, Inc. All Rights Reserved.
+ * Copyright (c) 2015 by Appcelerator, Inc. All Rights Reserved.
  *
  * @license
  * Licensed under the terms of the Apache Public License
@@ -23,33 +23,29 @@ exports.init = function (logger, config, cli) {
 	cli.on('build.post.compile', {
 		priority: 10000,
 		post: function (builder, finished) {
-			if (builder.buildOnly || builder.target !== 'dist-phonestore') return finished();
+			if (builder.buildOnly || builder.target !== 'dist-phonestore') {
+				return finished();
+			}
 
-			/*
-			TODO: sign the app. all you need to do is:
+			var wpARMDir = builder.cmakeTargetDir,
+				releaseDir = path.join(wpARMDir, 'Release'),
+				bundle = path.join(releaseDir, fs.readdirSync(releaseDir).filter(function (f) {
+					return f.indexOf('_Bundle') >= 0;
+				})[0]),
+				appx = path.join(bundle, fs.readdirSync(bundle).filter(function (f) {
+					return f.indexOf('.appx') >= 0 && f.indexOf('_scale') === -1;
+				})[0]),
+				outputDir = builder.outputDir,
+				dest = path.join(outputDir, path.basename(appx));
 
-			logger.info(__('Signing app'));
+			if (outputDir && outputDir != path.dirname(appx)) {
+				fs.existsSync(outputDir) || wrench.mkdirSyncRecursive(outputDir);
+				fs.existsSync(dest) && fs.unlinkSync(dest);
+				appc.fs.copyFileSync(appx, dest, {logger: logger.debug});
+			}
 
-			appc.subprocess.run(builder.windowsInfo.windowsphone[builder.wpsdk].xapSignTool, [
-			], function () {
-				var signedApp = path.join(builder.buildTargetProductDir, 'someapp.xap'),
-					outputDir = builder.outputDir;
-
-				if (outputDir && outputDir != path.dirname(signedApp)) {
-					fs.existsSync(outputDir) || wrench.mkdirSyncRecursive(outputDir);
-					dest = path.join(outputDir, path.basename(dest));
-					fs.existsSync(dest) && fs.unlinkSync(dest);
-					appc.fs.copyFileSync(builder.apkFile, dest, { logger: logger.debug });
-				}
-
-				logger.info(__('Packaging complete'));
-				logger.info(__('Package location: %s', dest.cyan));
-
-				finished();
-			});
-			*/
-
-			finished(); // temp
+			logger.info(__('Packaging complete'));
+			logger.info(__('Package location: %s', dest.cyan));
 		}
 	});
 

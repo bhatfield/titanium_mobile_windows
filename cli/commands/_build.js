@@ -188,6 +188,7 @@ WindowsBuilder.prototype.config = function config(logger, config, cli) {
 						'deploy-type': this.configOptionDeployType(100),
 						'device-id': this.configOptionDeviceID(500),
 						'output-dir': this.configOptionOutputDir(400),
+						'pfx-password': this.configOptionPFXPassword(450),
 						'profiler-host': {
 							hidden: true
 						},
@@ -344,12 +345,12 @@ WindowsBuilder.prototype.configOptionOutputDir = function configOptionOutputDir(
 
 	return {
 		abbr: 'O',
-		desc: __('the output directory to copy the built app; only applicable when target is %s or %s', 'dist-phonestore'.cyan, 'dist-phonestore'.cyan),
+		desc: __('the output directory to copy the built app; only applicable when target is %s or %s', 'dist-phonestore'.cyan, 'dist-winstore'.cyan),
 		hint: 'dir',
 		order: order,
 		prompt: function (callback) {
 			callback(fields.file({
-				promptLabel: __('Where would you like the output XAP file saved?'),
+				promptLabel: __('Where would you like the built app saved?'),
 				default: this.cli.argv['project-dir'] && path.join(this.cli.argv['project-dir'], 'dist'),
 				complete: true,
 				showHidden: true,
@@ -390,6 +391,7 @@ WindowsBuilder.prototype.configOptionTarget = function configOptionTarget(order)
 
 			if (value === 'dist-winstore') {
 				this.conf.options['ws-cert'].required = true;
+				this.conf.options['pfx-password'].required = true;
 			}
 		}.bind(this),
 		default: this.defaultTarget,
@@ -458,8 +460,8 @@ WindowsBuilder.prototype.configOptionWPSDK = function configOptionWPSDK(order) {
  */
 WindowsBuilder.prototype.configOptionWSCert = function configOptionWSCert(order) {
 	function validate(certFile, callback) {
-		if (!certFile) {
-			return callback(new Error(__('Please specify the path to your certificate file')));
+		if (certFile === '') {
+			return callback();
 		}
 
 		certFile = appc.fs.resolvePath(certFile);
@@ -477,8 +479,13 @@ WindowsBuilder.prototype.configOptionWSCert = function configOptionWSCert(order)
 		hint: 'path',
 		order: order,
 		prompt: function (callback) {
+			var certs = fs.readdirSync('./').filter(function (file) {
+					return file.slice(-4).toLowerCase() === '.pfx';
+				}),
+				existingCert = certs.length && appc.fs.resolvePath(certs[0]);
 			callback(fields.file({
-				promptLabel: __('Where is the __keystore file__ used to sign the app?'),
+				promptLabel: __('Where is the __pfx file__ used to sign the app? (leave blank to generate)'),
+				default: fs.existsSync(existingCert) ? certs[0] : undefined,
 				complete: true,
 				showHidden: true,
 				ignoreDirs: this.ignoreDirs,
@@ -487,6 +494,38 @@ WindowsBuilder.prototype.configOptionWSCert = function configOptionWSCert(order)
 			}));
 		},
 		validate: validate
+	};
+};
+
+/**
+ * Defines the --pfx-password option.
+ *
+ * @param {Integer} order - The order to apply to this option.
+ *
+ * @returns {Object}
+ */
+WindowsBuilder.prototype.configOptionPFXPassword = function configOptionPFXPassword(order) {
+	function validate(pfxPassword, callback) {
+		callback(pfxPassword !== undefined || !this.conf.options['pfx-password'].required ? null : new Error(__('Invalid pfx password')), pfxPassword);
+	}
+
+	return {
+		abbr: 'P',
+		desc: __('the PFX password; only applicable when target is %s', 'dist-winstore'.cyan),
+		hint: 'password',
+		order: order,
+		prompt: function (callback) {
+			if (this.cli.argv['ws-cert']) {
+				// We don't need a password! Carry on, mate.
+				return callback();
+			}
+			callback(fields.text({
+				promptLabel: __('What is (or will be) your PFX password?'),
+				password: true,
+				validate: validate.bind(this)
+			}));
+		}.bind(this),
+		validate: validate.bind(this)
 	};
 };
 
@@ -747,6 +786,9 @@ WindowsBuilder.prototype.initialize = function initialize(next) {
 	// directories
 	// FIXME If we're building to temp, we need to copy the build results back over to the original build dir!
 	this.outputDir             = argv['output-dir'] ? appc.fs.resolvePath(argv['output-dir']) : null;
+	this.wsCert                = argv['ws-cert'] ? argv['ws-cert'] : null;
+	this.pfxPassword           = argv['pfx-password'] ? argv['pfx-password'] : null;
+
 	this.buildSrcDir		   = path.join(this.buildDir, 'src'); // Where the src files go
 	this.cmakeTargetDir		   = path.join(this.buildDir, this.cmakeTarget); // where cmake generates the VS solution
 	this.buildTargetAssetsDir  = path.join(this.buildDir, 'Assets');
@@ -1648,6 +1690,8 @@ WindowsBuilder.prototype.generateCmakeList = function generateCmakeList(next) {
 			windowsSrcDir: path.resolve(__dirname, '..', '..').replace(/\\/g, '/').replace(' ', '\\ '), // cmake likes unix separators
 			version: this.tiapp.version,
 			assets: assetList.join('\n'),
+			publisherDisplayName: this.cli.tiapp.publisher,
+			publisherName: this.cli.tiapp.properties['ti.windows.publishername'].value,
 			appId: this.cli.tiapp.id,
 			sourceGroups: sourceGroups,
 			native_modules: native_modules
@@ -1715,7 +1759,15 @@ WindowsBuilder.prototype.compileApp = function compileApp(next) {
 	var modified = fs.readFileSync(vcxproj, 'utf8');
 	fs.existsSync(vcxproj) && fs.renameSync(vcxproj, vcxproj + '.bak');
 	// Only modify the one property group we care about!
-	modified = modified.replace(/<\/PropertyGroup>\s*<ItemDefinitionGroup/m, '<AppxBundle>Always</AppxBundle><AppxBundlePlatforms>' + this.arch + '</AppxBundlePlatforms>$&');
+	modified = modified.replace(/<\/PropertyGroup>\s*<ItemDefinitionGroup/m,
+		'<AppxBundle>Always</AppxBundle>' +
+		'<AppxBundlePlatforms>' + this.arch + '</AppxBundlePlatforms>' +
+		(
+			this.target !== 'dist-winstore' ? '' :
+			'<PackageCertificateThumbprint>' + this.certificateThumbprint + '</PackageCertificateThumbprint>' +
+			'<PackageCertificateKeyFile>' + this.certificatePath + '</PackageCertificateKeyFile>'
+		) + '$&');
+
 	// Fix quoted hint paths for native module winmd paths
 	modified = modified.replace(/<HintPath>"([^"]+?)"<\/HintPath>/, '<HintPath>$1<\/HintPath>');
 	fs.writeFileSync(vcxproj, modified);
